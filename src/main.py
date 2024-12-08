@@ -65,18 +65,17 @@ def on_mouse_up(event):
         process_image_and_ocr()
 
 def show_selection_window(full_img):
-    top = tk.Toplevel()
-    top.attributes("-fullscreen", True)
-    top.attributes('-topmost', True)
-    top.configure(cursor="cross")
-
-    # 将全屏截图转为Tk显示
+    global selection_window, instruction_text_id
+    # 使用Tk()作为主窗口，而不是Toplevel()
+    root = tk.Tk()
+    root.attributes("-fullscreen", True)
+    root.attributes('-topmost', True)
+    root.configure(cursor="cross")
 
     imgtk = ImageTk.PhotoImage(full_img)
     W, H = full_img.size
 
-    global selection_window, instruction_text_id
-    selection_window = tk.Canvas(top, bg='black', highlightthickness=0)
+    selection_window = tk.Canvas(root, bg='black', highlightthickness=0)
     selection_window.pack(fill="both", expand=True)
 
     selection_window.create_image(0, 0, anchor="nw", image=imgtk)
@@ -94,8 +93,17 @@ def show_selection_window(full_img):
     selection_window.bind("<B1-Motion>", on_mouse_move)
     selection_window.bind("<ButtonRelease-1>", on_mouse_up)
 
-    top.focus_force()
-    top.mainloop()
+    def on_esc(event):
+        """按下 Esc 关闭窗口"""
+        print("截图已取消")
+        root.destroy()
+
+    # 绑定 Esc 键
+    root.bind("<Escape>", on_esc)
+
+    root.focus_force()
+    root.mainloop()
+
 
 def capture_screen():
     global image_full
@@ -135,6 +143,7 @@ def process_image_and_ocr():
     if response.status_code == 200:
         result = response.json()
         content = result["choices"][0]["message"]["content"]
+        print(f"回复内容：{content}")
         match = re.search(r"latex\n(.*?)\n", content)
         latex_code = match[1] if match else ""
         if latex_code:
@@ -150,10 +159,10 @@ def show_tooltip(text):
     tip.overrideredirect(True)
     tip.attributes("-topmost", True)
     x, y = tip.winfo_pointerx(), tip.winfo_pointery()
-    tip.geometry(f"+{x}+{y}")
+    tip.geometry(f"+{x+10}+{y+10}")
     label = tk.Label(tip, text=text, bg="yellow", fg="black", bd=1, relief="solid")
     label.pack()
-    tip.after(500, tip.destroy)  # 0.5秒后关闭
+    tip.after(1000, tip.destroy)  # 0.5秒后关闭
     tip.mainloop()
 
 def on_hotkey():

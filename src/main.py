@@ -144,7 +144,7 @@ def process_image_and_ocr():
         result = response.json()
         content = result["choices"][0]["message"]["content"]
         print(f"回复内容：\n{content}")
-        match = re.search(re.compile("\`\`\`latex\n(.*?)\n\`\`\`", re.DOTALL), content)
+        match = re.search(re.compile("```latex\n(.*?)\n```", re.DOTALL), content)
         latex_code = match[1] if match else ""
         if latex_code:
             pyperclip.copy(latex_code)

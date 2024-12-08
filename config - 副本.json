@@ -1,0 +1,43 @@
+{
+    "hotkey": "ctrl+shift+a",
+    "endpoint": "https://your_azure_service_endpoint/",
+    "_endpoint(example)": "https://****.openai.azure.com/",
+    "api_path": "your_api_path",
+    "_api_path(example)": "openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview",
+    "api_key": "your_api_key",
+    "api_config": {
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "text",
+                "text": "你是一个latex公式的专家，请根据用户发送的latex公式图片，直接返回相应的latex代码"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "\n"
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/jpeg;base64,{encoded_image}"
+                }
+              },
+              {
+                "type": "text",
+                "text": "\n"
+              }
+            ]
+          }
+        ],
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 800
+      }
+}

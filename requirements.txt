@@ -1,5 +1,6 @@
 pyperclip
 pillow
-pyscreenshot
 requests
 keyboard
+pyautogui
+mss

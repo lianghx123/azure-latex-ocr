@@ -1,178 +1,270 @@
 import json
 import os
-import sys
-import io
-import time
 import base64
 import requests
 import pyperclip
 import tkinter as tk
-from tkinter import messagebox
-from PIL import Image, ImageTk
-import pyscreenshot as ImageGrab
+import threading
 import keyboard
 import re
+import pyautogui
+import io
+from PIL import Image, ImageTk
+from tkinter import messagebox
 import ctypes
+from ctypes import wintypes
+from mss import mss  # 新增mss库
 
-# 全局变量
-selection_start = None
-rect = None
-selection_window = None
-image_full = None
-image_path = "temp_screenshot.png"
-instruction_text_id = None
+# 全局状态管理
+class AppState:
+    def __init__(self):
+        self.root = None
+        self.selection_start = None
+        self.rect = None
+        self.selection_window = None
+        self.image_full = None
+        self.is_capturing = False
+        self.hotkey = "ctrl+shift+s"
+        self.config = {}
+        self.physical_width = 0
+        self.physical_height = 0
+        
+    def load_config(self):
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                self.config = json.load(f)
+            self.hotkey = self.config.get("hotkey", self.hotkey)
+        except Exception as e:
+            messagebox.showerror("配置错误", f"无法加载配置文件: {str(e)}")
+            os._exit(1)
 
-def load_config():
-    with open("config.json", "r", encoding="utf-8") as f:
-        config = json.load(f)
-    return config
-
-def on_mouse_down(event):
-    global selection_start, rect, instruction_text_id
-    selection_start = (event.x, event.y)
-    # 移除提示文本
-    if instruction_text_id is not None:
-        selection_window.delete(instruction_text_id)
-    if rect is not None:
-        selection_window.delete(rect)
-    rect = selection_window.create_rectangle(event.x, event.y, event.x, event.y, outline='red', width=2)
-
-def on_mouse_move(event):
-    global rect, selection_start
-    if selection_start:
-        x1, y1 = selection_start
-        x2, y2 = event.x, event.y
-        if rect is not None:
-            selection_window.delete(rect)
-        rect = selection_window.create_rectangle(x1, y1, x2, y2, outline='red', width=2)
-
-def on_mouse_up(event):
-    global selection_start, rect, selection_window, image_full
-    if selection_start:
-        x1, y1 = selection_start
-        x2, y2 = event.x, event.y
-        if x2 < x1: x1, x2 = x2, x1
-        if y2 < y1: y1, y2 = y2, y1
-
-        # 裁剪图像
-        crop_img = image_full.crop((x1, y1, x2, y2))
-        crop_img.save(image_path)
-
-        root = selection_window._root()
-        root.destroy()
-
-        # 调用OCR->LaTeX API
-        process_image_and_ocr()
-
-def show_selection_window(full_img):
-    global selection_window, instruction_text_id
-    # 使用Tk()作为主窗口，而不是Toplevel()
-    root = tk.Tk()
-    root.attributes("-fullscreen", True)
-    root.attributes('-topmost', True)
-    root.configure(cursor="cross")
-
-    imgtk = ImageTk.PhotoImage(full_img)
-    W, H = full_img.size
-
-    selection_window = tk.Canvas(root, bg='black', highlightthickness=0)
-    selection_window.pack(fill="both", expand=True)
-
-    selection_window.create_image(0, 0, anchor="nw", image=imgtk)
-    selection_window.imgtk = imgtk
-
-    # 添加半透明遮罩
-    overlay = selection_window.create_rectangle(0, 0, W, H, fill="black", stipple="gray50")
-
-    # 显示提示文字
-    instruction_text_id = selection_window.create_text(
-        W/2, H/2, text="请用鼠标拖拽选择区域，松开结束", fill="white", font=("Helvetica", 20)
-    )
-
-    selection_window.bind("<ButtonPress-1>", on_mouse_down)
-    selection_window.bind("<B1-Motion>", on_mouse_move)
-    selection_window.bind("<ButtonRelease-1>", on_mouse_up)
-
-    def on_esc(event):
-        """按下 Esc 关闭窗口"""
-        print("截图已取消")
-        root.destroy()
-
-    # 绑定 Esc 键
-    root.bind("<Escape>", on_esc)
-
-    root.focus_force()
-    root.mainloop()
-
-
-def capture_screen():
-    global image_full
-    user32 = ctypes.windll.user32
-    user32.SetProcessDPIAware()  # 设置为DPI感知，确保获取实际分辨率
-    screen_width = user32.GetSystemMetrics(0)
-    screen_height = user32.GetSystemMetrics(1)
-    img = ImageGrab.grab(bbox=(0, 0, screen_width, screen_height))
-    image_full = img
-    show_selection_window(img)
-
-def process_image_and_ocr():
-    config = load_config()
-    endpoint = config["endpoint"]
-    api_key = config["api_key"]
-    api_path = config.get("api_path", "")
-
-    api_config = config.get("api_config", {})
-
-    encoded_image = base64.b64encode(open(image_path, 'rb').read()).decode('ascii')
-    config["api_config"]["messages"][1]["content"][1]["image_url"]["url"] = f"data:image/jpeg;base64,{encoded_image}"
-
-    headers = {
-        "Content-Type": "application/json",
-        "api-key": api_key,
-    }
-
-    url = endpoint.rstrip("/") + "/" + api_path.lstrip("/")
-
-    try:
-        response = requests.post(url, headers=headers, json=api_config)
-        response.raise_for_status()
-    except requests.RequestException as e:
-        show_tooltip(f"请求失败: {e}")
-        return
-
-    if response.status_code == 200:
-        result = response.json()
-        content = result["choices"][0]["message"]["content"]
-        print(f"回复内容：\n{content}")
-        match = re.search(re.compile("```latex\n(.*?)\n```", re.DOTALL), content)
-        latex_code = match[1] if match else ""
-        if latex_code:
-            pyperclip.copy(latex_code)
-            show_tooltip("LaTeX代码已复制！")
-        else:
-            show_tooltip("未识别到公式")
-    else:
-        show_tooltip(f"请求失败: {response.status_code}")
-
-def show_tooltip(text):
-    tip = tk.Tk()
-    tip.overrideredirect(True)
-    tip.attributes("-topmost", True)
-    x, y = tip.winfo_pointerx(), tip.winfo_pointery()
-    tip.geometry(f"+{x+10}+{y+10}")
-    label = tk.Label(tip, text=text, bg="yellow", fg="black", bd=1, relief="solid")
-    label.pack()
-    tip.after(1000, tip.destroy)  # 0.5秒后关闭
-    tip.mainloop()
-
-def on_hotkey():
-    capture_screen()
+app_state = AppState()
 
 def main():
-    hotkey = load_config().get("hotkey", "ctrl+shift+s")
-    keyboard.add_hotkey(hotkey, on_hotkey)
-    print(f"Press {hotkey} to capture and OCR.")
-    keyboard.wait()
+    app_state.load_config()
+    app_state.root = tk.Tk()
+    app_state.root.withdraw()
+    
+    keyboard.add_hotkey(app_state.hotkey, capture_trigger)
+    print(f"截图热键已注册: {app_state.hotkey}")
+    
+    keyboard_thread = threading.Thread(target=keyboard.wait, daemon=True)
+    keyboard_thread.start()
+    
+    app_state.root.mainloop()
+
+def capture_trigger():
+    if not app_state.is_capturing:
+        app_state.is_capturing = True
+        app_state.root.after(0, capture_screen)
+
+def capture_screen():
+    try:
+        with mss() as sct:  # 使用mss获取多显示器信息
+            # 获取所有显示器信息
+            monitors = sct.monitors
+            # 获取当前鼠标位置
+            mouse_x, mouse_y = pyautogui.position()
+            
+            # 查找鼠标所在的显示器
+            target_monitor = None
+            for monitor in monitors[1:]:  # 跳过第一个总区域
+                left = monitor['left']
+                top = monitor['top']
+                right = left + monitor['width']
+                bottom = top + monitor['height']
+                if left <= mouse_x < right and top <= mouse_y < bottom:
+                    target_monitor = monitor
+                    break
+            
+            if not target_monitor:  # 默认主显示器
+                target_monitor = monitors[1] if len(monitors) > 1 else monitors[0]
+            
+            # 截取目标显示器
+            img = sct.grab(target_monitor)
+            img_pil = Image.frombytes('RGB', img.size, img.rgb)
+            
+            # 保存截图和显示器参数
+            app_state.image_full = img_pil
+            app_state.physical_width = target_monitor['width']
+            app_state.physical_height = target_monitor['height']
+            
+            show_selection_window(img_pil, target_monitor)
+            
+    except Exception as e:
+        messagebox.showerror("截图错误", f"截图失败: {str(e)}")
+    finally:
+        app_state.is_capturing = False
+
+def show_selection_window(full_img, monitor):
+    """在目标显示器上显示选区窗口"""
+    # 获取显示器参数
+    width = monitor['width']
+    height = monitor['height']
+    left = monitor['left']
+    top = monitor['top']
+
+    # 创建窗口（先不设置全屏）
+    top_window = tk.Toplevel()
+    top_window.geometry(f"{width}x{height}+{left}+{top}")
+    top_window.overrideredirect(True)  # 隐藏窗口装饰
+    top_window.attributes("-topmost", True)
+    top_window.configure(cursor="cross")
+    
+    # Windows系统下强制窗口位置
+    if os.name == 'nt':
+        hwnd = top_window.winfo_id()
+        
+        # 移除窗口边框（更彻底的样式修改）
+        GWL_STYLE = -16
+        WS_POPUP = 0x80000000
+        WS_VISIBLE = 0x10000000
+        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE)
+        
+        # 强制设置窗口位置和大小
+        ctypes.windll.user32.SetWindowPos(
+            hwnd, -1,  # HWND_TOPMOST
+            left, top, width, height,
+            0x0040  # SWP_FRAMECHANGED
+        )
+
+    # 显示截图
+    imgtk = ImageTk.PhotoImage(full_img)
+    canvas = tk.Canvas(top_window, bg='black', highlightthickness=0)
+    canvas.pack(fill="both", expand=True)
+    canvas.create_image(0, 0, anchor="nw", image=imgtk)
+    canvas.imgtk = imgtk
+
+    # 半透明遮罩
+    canvas.create_rectangle(0, 0, width, height, fill="black", stipple="gray50")
+    
+    # 提示文字
+    canvas.create_text(
+        width/2, height/2, 
+        text="拖拽选择区域 (ESC取消)", 
+        fill="white", 
+        font=("Helvetica", 20)
+    )
+
+    # 事件绑定
+    canvas.bind("<ButtonPress-1>", lambda e: on_mouse_down(e, canvas))
+    canvas.bind("<B1-Motion>", lambda e: on_mouse_move(e, canvas))
+    canvas.bind("<ButtonRelease-1>", lambda e: on_mouse_up(e, canvas, top_window))
+
+    def on_esc(event):
+        top_window.destroy()
+        print("截图已取消")
+    
+    top_window.bind("<Escape>", on_esc)
+    top_window.focus_force()
+
+def on_mouse_down(event, canvas):
+    app_state.selection_start = (event.x, event.y)
+    canvas.delete("selection")
+    canvas.delete("instruction")
+    app_state.rect = canvas.create_rectangle(
+        *app_state.selection_start, *app_state.selection_start,
+        outline='red', width=2, tags="selection"
+    )
+
+def on_mouse_move(event, canvas):
+    if app_state.selection_start:
+        x1, y1 = app_state.selection_start
+        x2, y2 = event.x, event.y
+        canvas.coords(app_state.rect, x1, y1, x2, y2)
+
+def on_mouse_up(event, canvas, window):
+    if app_state.selection_start:
+        # 获取规范化的坐标
+        x1, y1 = app_state.selection_start
+        x2, y2 = event.x, event.y
+        x_start, x_end = sorted([x1, x2])
+        y_start, y_end = sorted([y1, y2])
+        
+        # 启动OCR处理线程
+        threading.Thread(
+            target=process_ocr, 
+            args=(x_start, y_start, x_end, y_end)
+        ).start()
+    
+    window.destroy()
+    app_state.selection_start = None
+
+def process_ocr(x1, y1, x2, y2):
+    try:
+        # 裁剪图像（使用相对坐标）
+        crop_img = app_state.image_full.crop((x1, y1, x2, y2))
+        image_bytes = io.BytesIO()
+        crop_img.save(image_bytes, format='PNG')
+        
+        # 调用OCR API
+        encoded_image = base64.b64encode(image_bytes.getvalue()).decode('ascii')
+        response = call_ocr_api(encoded_image)
+        
+        # 处理结果
+        if response:
+            content = response["choices"][0]["message"]["content"]
+            print(content)
+            if latex_code := extract_latex(content):
+                pyperclip.copy(latex_code)
+                show_tooltip("LaTeX已复制到剪贴板")
+            else:
+                show_tooltip("未识别到公式")
+    except Exception as e:
+        show_tooltip(f"处理失败: {str(e)}")
+
+def call_ocr_api(image_base64):
+    """调用OCR API"""
+    config = app_state.config
+    api_config = config.get("api_config", {}).copy()
+    
+    # 动态插入图片数据
+    if "messages" in api_config:
+        for msg in api_config["messages"]:
+            if "content" in msg and isinstance(msg["content"], list):
+                for content_item in msg["content"]:
+                    if isinstance(content_item, dict) and "image_url" in content_item:
+                        content_item["image_url"]["url"] = f"data:image/png;base64,{image_base64}"
+    
+    try:
+        response = requests.post(
+            url = config["endpoint"].rstrip("/") + "/" + config.get("api_path", "").lstrip("/"),
+            headers = {
+                "Content-Type": "application/json",
+                "api-key": config["api_key"]
+            },
+            json = api_config,
+            timeout=10
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        show_tooltip(f"API请求失败: {str(e)}")
+        return None
+
+def extract_latex(content):
+    """从响应内容提取LaTeX代码"""
+    match = re.search(r"```latex\n(.*?)\n```", content, re.DOTALL)
+    return match.group(1).strip() if match else None
+
+def show_tooltip(text):
+    """显示浮动提示"""
+    tip = tk.Toplevel()
+    tip.overrideredirect(True)
+    tip.attributes("-topmost", True)
+    
+    # 获取鼠标位置
+    x = tip.winfo_pointerx() + 15
+    y = tip.winfo_pointery() + 10
+    
+    # 设置位置和内容
+    tip.geometry(f"+{x}+{y}")
+    label = tk.Label(tip, text=text, bg="yellow", fg="black", 
+                    padx=5, pady=2, font=("微软雅黑", 10))
+    label.pack()
+    
+    # 自动关闭
+    tip.after(1500, tip.destroy)
 
 if __name__ == "__main__":
     main()

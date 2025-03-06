@@ -12,7 +12,7 @@
             "content": [
               {
                 "type": "text",
-                "text": "你是一个latex公式的专家，请根据用户发送的latex公式图片，直接返回相应的latex代码"
+                "text": "你是一个latex公式的专家，请根据用户发送的latex公式图片，直接返回相应的latex代码。格式要求：```latex {latex_code}```"
               }
             ]
           },

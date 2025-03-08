@@ -12,6 +12,7 @@ import io
 from PIL import Image, ImageTk
 from tkinter import messagebox
 import ctypes
+import time
 from ctypes import wintypes
 from mss import mss  # 新增mss库
 
@@ -28,6 +29,9 @@ class AppState:
         self.config = {}
         self.physical_width = 0
         self.physical_height = 0
+        self.hotkey_id = None  # 热键ID存储
+        self.hotkey_registered = False  # 热键状态标识
+        self.thread_alive = True        # 线程状态标识
         
     def load_config(self):
         try:
@@ -40,23 +44,58 @@ class AppState:
 
 app_state = AppState()
 
-def main():
-    app_state.load_config()
-    app_state.root = tk.Tk()
-    app_state.root.withdraw()
-    
-    keyboard.add_hotkey(app_state.hotkey, capture_trigger)
-    print(f"截图热键已注册: {app_state.hotkey}")
-    
-    keyboard_thread = threading.Thread(target=keyboard.wait, daemon=True)
-    keyboard_thread.start()
-    
-    app_state.root.mainloop()
+def keyboard_wait_loop():
+    while app_state.thread_alive:
+        try:
+            keyboard.wait()
+        except Exception as e:
+            print(f"键盘监听异常: {str(e)}")
+            time.sleep(1)
 
+# 在程序退出时清理资源
+def on_exit():
+    if app_state.hotkey_id:
+        keyboard.remove_hotkey(app_state.hotkey_id)
+    app_state.thread_alive = False
+    keyboard.unhook_all()
+    app_state.root.quit()
+
+# 热键管理函数
+def manage_hotkey():
+    while app_state.thread_alive:
+        try:
+            # 仅在热键未注册时重新注册
+            if not app_state.hotkey_id: 
+                # 先移除可能存在的旧热键
+                if app_state.hotkey_id is not None:  # 首次运行为None跳过
+                    keyboard.remove_hotkey(app_state.hotkey_id)
+                
+                # 注册新热键并保存ID
+                new_id = keyboard.add_hotkey(
+                    app_state.hotkey, 
+                    capture_trigger,
+                    suppress=True
+                )
+                app_state.hotkey_id = new_id
+                print(f"请按下快捷键进行截图：{app_state.hotkey}")
+
+            time.sleep(5)
+        except Exception as e:
+            print(f"热键维护异常: {str(e)}")
+            app_state.hotkey_id = None  # 重置ID触发重新注册
+            time.sleep(1)
+
+# 改进后的热键触发函数
 def capture_trigger():
-    if not app_state.is_capturing:
-        app_state.is_capturing = True
-        app_state.root.after(0, capture_screen)
+    try:
+        print(1)
+        if not app_state.is_capturing:
+            app_state.is_capturing = True
+            app_state.root.after(0, capture_screen)
+        print(2)
+    except Exception as e:
+        print(f"热键回调异常: {str(e)}")
+        app_state.is_capturing = False
 
 def capture_screen():
     try:
@@ -265,6 +304,21 @@ def show_tooltip(text):
     
     # 自动关闭
     tip.after(1500, tip.destroy)
+
+def main():
+    app_state.load_config()
+    app_state.root = tk.Tk()
+    app_state.root.withdraw()
+    
+    # 启动独立的热键维护线程
+    hotkey_thread = threading.Thread(target=manage_hotkey, daemon=True)
+    hotkey_thread.start()
+
+    # 启动键盘监听线程
+    keyboard_thread = threading.Thread(target=keyboard_wait_loop, daemon=True)
+    keyboard_thread.start()
+    
+    app_state.root.mainloop()
 
 if __name__ == "__main__":
     main()
